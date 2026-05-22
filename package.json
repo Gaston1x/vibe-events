@@ -1,0 +1,43 @@
+{
+  "name": "crees-poder-hacerme-el-html-css",
+  "version": "1.0.0",
+  "description": "Interfaz React para marketplace ficticio de eventos en Guatemala.",
+  "private": true,
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:api": "node server/index.js",
+    "dev:full": "concurrently \"npm:dev\" \"npm:dev:api\"",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "node server/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "framer-motion": "^12.40.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.16.0",
+    "morgan": "^1.10.1",
+    "mssql": "^12.5.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "three": "^0.184.0",
+    "vite": "^8.0.14",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0"
+  }
+}
