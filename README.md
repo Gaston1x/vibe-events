@@ -92,7 +92,7 @@ Compila y publica `dist/` en la rama `gh-pages`. Para producción, la API se des
 | --- | --- |
 | Interfaz, búsqueda, ficha y flujo de reserva | ✅ Completo (datos de ejemplo) |
 | Páginas legales, cookies y consentimientos | ✅ Completo (revisión legal pendiente) |
-| Usuarios: registro, login, baja y eliminación | ✅ API + SQL Server |
+| Usuarios: registro, login, baja y eliminación | ✅ API + SQL Server, probado de punta a punta |
 | Proveedores, cotizaciones, reservas y favoritos en BD | ⏳ Por hacer: hoy viven en `src/data.js` |
 | API publicada en internet | ⏳ Por hacer |
 | Pasarela de pagos | ⏳ Por hacer |

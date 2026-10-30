@@ -34,9 +34,26 @@ Pruebas manuales y automatizadas en el navegador (Chromium, escritorio 1280 px y
 - Banner de cookies: rechazar no guarda favoritos y se puede reabrir desde el pie.
 - Sin desbordamiento horizontal a 375 px.
 
+## Pruebas contra SQL Server (29 de octubre de 2026)
+
+Ejecutadas en SQL Server 2025 Express, con la API local y el usuario `vibe_app` (permisos de solo lectura y escritura). Resultado: 17 de 17 pruebas de la API aprobadas.
+
+| Caso | Resultado esperado | Estado |
+| --- | --- | --- |
+| Registro sin aceptar términos / sin mayoría de edad | 400 | ✅ |
+| Registro válido / correo duplicado | 201 / 409 | ✅ |
+| El JWT no contiene nombre ni correo | solo `sub`, `role` | ✅ |
+| Login con contraseña incorrecta / correcta | 401 / 200 | ✅ |
+| `/me` con y sin token | 200 / 401 | ✅ |
+| Activar correos y darse de baja (se guarda en BD) | 200 | ✅ |
+| Eliminar cuenta con contraseña incorrecta / correcta | 401 / 204 | ✅ |
+| `/me` y login después de eliminar | 404 / 401 | ✅ |
+| El historial de auditoría queda anónimo (`user_id` NULL) | sí | ✅ |
+
+Desde la interfaz también se verificó el flujo completo: registro → panel con el nombre real → perfil → activar y desactivar correos → cerrar sesión → iniciar sesión → eliminar cuenta.
+
 ## No cubierto
 
-- Registro, login, baja y eliminación de cuenta **contra SQL Server**: no hay instancia en el equipo de prueba. Solo se verificó la sintaxis del servidor (`node --check`).
 - Lectores de pantalla reales (NVDA/VoiceOver).
 
 Para correr las pruebas sin animaciones (útil en navegadores automatizados) agrega `?sin-animaciones` a la URL.
