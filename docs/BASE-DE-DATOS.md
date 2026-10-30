@@ -2,7 +2,7 @@
 
 ## Situación actual
 
-- **Conectado a SQL Server:** solo los usuarios (tablas `Users` y `UserAuditLog`), mediante la API de `server/`.
+- **Conectado a SQL Server (probado):** solo los usuarios (tablas `Users` y `UserAuditLog`), mediante la API de `server/`.
 - **Sin base de datos:** proveedores, cotizaciones, reservas, favoritos y mensajes. Se generan en [src/data.js](../src/data.js) o se guardan en el navegador.
 - **En la demo de GitHub Pages no hay API ni base de datos.** GitHub Pages solo sirve archivos estáticos, así que el login no puede funcionar ahí.
 
@@ -48,3 +48,8 @@ En orden de prioridad, para que el sitio deje de depender de datos de ejemplo:
 5. **Producción:** API en Azure App Service o Render, base de datos en Azure SQL Database (tiene un nivel gratuito) con `SQL_ENCRYPT=true`. Después, apuntar `VITE_API_BASE_URL` a esa URL y agregarla al CSP de `index.html`.
 6. **Pagos:** pasarela con soporte en Guatemala (por ejemplo Recurrente, Pagalo o Visanet) usando su checkout alojado, para no tocar datos de tarjeta.
 7. **Correo transaccional:** un servicio como Resend o Brevo para confirmaciones, con enlace de baja en un clic en los correos promocionales.
+
+## Si la API no puede iniciar sesión en SQL Server
+
+- `Login failed for user 'vibe_app'`: revisa que `SQL_PASSWORD` esté entre comillas si tiene `#`, y que el modo de autenticación sea mixto.
+- `ECONNREFUSED 127.0.0.1:1433`: SQL Server Express trae TCP desactivado. Actívalo en *SQL Server Configuration Manager → Protocolos → TCP/IP*, con el puerto 1433 en *IPAll*, y reinicia el servicio `SQL Server (SQLEXPRESS)`.
