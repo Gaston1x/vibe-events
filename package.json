@@ -1,9 +1,16 @@
 {
-  "name": "crees-poder-hacerme-el-html-css",
-  "version": "1.0.0",
-  "description": "Interfaz React para marketplace ficticio de eventos en Guatemala.",
+  "name": "vibe-events",
+  "version": "1.1.0",
+  "description": "Marketplace para cotizar, comparar y reservar proveedores de eventos en Guatemala (React + Express + SQL Server).",
   "private": true,
-  "main": "index.html",
+  "homepage": "https://gaston1x.github.io/vibe-events/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gaston1x/vibe-events.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:api": "node server/index.js",
@@ -13,8 +20,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["eventos", "marketplace", "guatemala", "react", "vite", "express", "sql-server"],
+  "author": "Gaston1x (https://github.com/Gaston1x)",
   "license": "MIT",
   "type": "module",
   "dependencies": {
