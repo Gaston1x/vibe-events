@@ -22,6 +22,17 @@ app.use(express.json({ limit: "30kb" }));
 app.use(morgan("dev"));
 
 app.use(
+  "/api/auth/login",
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Demasiados intentos de inicio de sesión. Espera 15 minutos." },
+  }),
+);
+
+app.use(
   "/api/auth",
   rateLimit({
     windowMs: 15 * 60 * 1000,

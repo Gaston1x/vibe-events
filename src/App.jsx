@@ -5,8 +5,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
-  Bell,
-  Bookmark,
   Building2,
   Calendar,
   Camera,
@@ -18,10 +16,10 @@ import {
   Grid3X3,
   Heart,
   Home,
-  Image as ImageIcon,
+  Info,
   LockKeyhole,
   LogIn,
-  Mail,
+  LogOut,
   MapPin,
   Menu,
   MessageCircle,
@@ -37,6 +35,7 @@ import {
   Sofa,
   Sparkles,
   Star,
+  Trash2,
   Utensils,
   User,
   UserPlus,
@@ -53,9 +52,49 @@ import {
   quotes,
   reservations,
 } from "./data.js";
-import { getCurrentUser, loginUser, registerUser } from "./api.js";
+import { deleteAccount, getCurrentUser, loginUser, registerUser, updatePreferences } from "./api.js";
+import { business, isPending, legalVersion } from "./business.js";
+import { readConsent, saveConsent } from "./consent.js";
+import { LegalPage, legalPages } from "./Legal.jsx";
 
-const minEventDate = "2026-05-21";
+// Fecha local de hoy en formato AAAA-MM-DD, para no permitir eventos en el pasado.
+function todayISO() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+// También se puede forzar con ?sin-animaciones en la URL (útil para pruebas automatizadas).
+const prefersReducedMotion = () =>
+  new URLSearchParams(window.location.search).has("sin-animaciones") ||
+  (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+
+// Rutas en el hash (#/resultados?category=salones) para que cada vista tenga URL,
+// funcione el botón Atrás y se puedan compartir enlaces en GitHub Pages.
+const routeSlugs = {
+  home: "",
+  results: "resultados",
+  detail: "proveedor",
+  booking: "reserva",
+  dashboard: "panel",
+  info: "info",
+  legal: "legal",
+};
+
+function routeToHash(route) {
+  const { name, draft, ...params } = route;
+  const query = new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ""),
+  ).toString();
+  return `#/${routeSlugs[name] ?? ""}${query ? `?${query}` : ""}`;
+}
+
+function hashToRoute(hash) {
+  const [path, query = ""] = hash.replace(/^#\/?/, "").split("?");
+  const name = Object.keys(routeSlugs).find((key) => routeSlugs[key] === path) || "home";
+  const params = Object.fromEntries(new URLSearchParams(query));
+  if (params.step) params.step = Number(params.step) || 1;
+  return { ...params, name };
+}
 
 const iconMap = {
   building: Building2,
@@ -72,7 +111,7 @@ const dashboardItems = [
   { id: "cotizaciones", label: "Cotizaciones", icon: ClipboardList },
   { id: "reservas", label: "Reservas", icon: Calendar },
   { id: "favoritos", label: "Favoritos", icon: Heart },
-  { id: "mensajes", label: "Mensajes", icon: MessageCircle, badge: 2 },
+  { id: "mensajes", label: "Mensajes", icon: MessageCircle },
   { id: "perfil", label: "Perfil", icon: User },
   { id: "configuracion", label: "Configuración", icon: Settings },
 ];
@@ -106,7 +145,7 @@ function Logo({ compact = false }) {
   );
 }
 
-function Header({ navigate, currentView, openDashboard, openAuth }) {
+function Header({ navigate, openDashboard, openAuth, currentUser, onLogout }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const nav = [
@@ -128,30 +167,44 @@ function Header({ navigate, currentView, openDashboard, openAuth }) {
         ))}
       </nav>
       <div className="top-actions">
-        {currentView.name !== "dashboard" && (
+        <button className="ghost icon-only" aria-label="Buscar proveedores" onClick={() => navigate({ name: "results", category: "salones" })}>
+          <Search size={18} />
+        </button>
+        {currentUser ? (
           <>
-            <button className="ghost icon-only" aria-label="Buscar" onClick={() => navigate({ name: "results", category: "salones" })}>
-              <Search size={18} />
+            <button className="btn secondary login-btn" onClick={openDashboard}>
+              <User size={16} />
+              Mi panel
             </button>
-            <button className="ghost icon-only" aria-label="Notificaciones" onClick={openDashboard}>
-              <Bell size={18} />
+            <button className="btn primary register-btn" onClick={onLogout}>
+              <LogOut size={16} />
+              Cerrar sesión
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="btn secondary login-btn" onClick={() => openAuth("login")}>
+              <LogIn size={16} />
+              Iniciar sesión
+            </button>
+            <button className="btn primary register-btn" onClick={() => openAuth("register")}>
+              <UserPlus size={16} />
+              Registrarse
             </button>
           </>
         )}
-        <button className="btn secondary login-btn" onClick={() => openAuth("login")}>
-          <LogIn size={16} />
-          Iniciar sesión
-        </button>
-        <button className="btn primary register-btn" onClick={() => openAuth("register")}>
-          <UserPlus size={16} />
-          Registrarse
-        </button>
-        <button className="ghost icon-only menu-toggle" aria-label="Menú" onClick={() => setMenuOpen((value) => !value)}>
+        <button
+          className="ghost icon-only menu-toggle"
+          aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
+          aria-expanded={menuOpen}
+          aria-controls="menu-movil"
+          onClick={() => setMenuOpen((value) => !value)}
+        >
           {menuOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
       </div>
       {menuOpen && (
-        <div className="mobile-menu">
+        <div className="mobile-menu" id="menu-movil">
           {nav.map((item) => (
             <button
               key={item.label}
@@ -182,7 +235,7 @@ function ThreeScene() {
 
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.domElement.setAttribute("aria-label", "Escena 3D decorativa de Vibe Events");
+    renderer.domElement.setAttribute("aria-hidden", "true");
     host.appendChild(renderer.domElement);
 
     const group = new THREE.Group();
@@ -255,9 +308,10 @@ function ThreeScene() {
       camera.updateProjectionMatrix();
     };
 
+    const reducedMotion = prefersReducedMotion();
     const animate = () => {
-      frame = window.requestAnimationFrame(animate);
-      const time = performance.now() * 0.001;
+      if (!reducedMotion) frame = window.requestAnimationFrame(animate);
+      const time = reducedMotion ? 1.2 : performance.now() * 0.001;
       group.rotation.y = time * 0.25;
       group.rotation.x = Math.sin(time * 0.6) * 0.08;
       shapes[0].rotation.x = time * 0.42;
@@ -269,11 +323,15 @@ function ThreeScene() {
 
     resize();
     animate();
-    window.addEventListener("resize", resize);
+    const onResize = () => {
+      resize();
+      if (reducedMotion) renderer.render(scene, camera);
+    };
+    window.addEventListener("resize", onResize);
 
     return () => {
       window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", onResize);
       shapes.forEach((shape) => {
         shape.geometry.dispose();
       });
@@ -293,7 +351,7 @@ function ThreeScene() {
 function HeroSearch({ onSearch, navigate }) {
   const [form, setForm] = useState({
     category: "salones",
-    location: "Guatemala",
+    location: "Todos",
     date: "",
   });
 
@@ -301,18 +359,22 @@ function HeroSearch({ onSearch, navigate }) {
     event.preventDefault();
     onSearch({
       category: sanitize(form.category) || "salones",
-      location: sanitize(form.location) || "Guatemala",
+      location: sanitize(form.location) || "Todos",
       date: sanitize(form.date),
     });
   };
 
+  const popularSearches = [
+    { label: "Salones en Sacatepéquez", category: "salones", location: "Sacatepéquez" },
+    { label: "Catering para bodas", category: "catering", eventType: "Boda" },
+    { label: "Fotografía en Guatemala", category: "fotografia", location: "Guatemala" },
+    { label: "Sonido e iluminación", category: "sonido" },
+  ];
+
   return (
     <section className="hero">
       <div className="hero-media">
-        <img
-          src="https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1800&q=85"
-          alt="Recepción nocturna al aire libre con luces cálidas"
-        />
+        <img src="https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1800&q=85" alt="" />
         <div className="hero-shade" />
         <ThreeScene />
       </div>
@@ -321,7 +383,7 @@ function HeroSearch({ onSearch, navigate }) {
           <MapPin size={15} /> Guatemala
         </span>
         <h1>Tu evento empieza aquí</h1>
-        <p>Cotiza, compara y reserva proveedores verificados para eventos inolvidables en toda Guatemala.</p>
+        <p>Cotiza, compara y reserva salones, catering, fotografía y más para tu evento en Guatemala.</p>
         <form className="search-panel" onSubmit={submit}>
           <label>
             <span>¿Qué servicio necesitas?</span>
@@ -336,16 +398,17 @@ function HeroSearch({ onSearch, navigate }) {
           <label>
             <span>¿Dónde será tu evento?</span>
             <select value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })}>
+              <option value="Todos">Todo el país</option>
               {departments.map((department) => (
                 <option key={department}>{department}</option>
               ))}
             </select>
           </label>
           <label>
-            <span>Fecha del evento</span>
+            <span>Fecha del evento (opcional)</span>
             <input
               type="date"
-              min={minEventDate}
+              min={todayISO()}
               value={form.date}
               onChange={(event) => setForm({ ...form, date: event.target.value })}
             />
@@ -355,12 +418,9 @@ function HeroSearch({ onSearch, navigate }) {
             Buscar proveedores
           </button>
         </form>
-        <div className="popular-searches">
-          {["Salones en Antigua", "Catering para bodas", "Fotógrafos en Ciudad de Guatemala", "Sonido e iluminación"].map((label, index) => (
-            <button
-              key={label}
-              onClick={() => navigate({ name: "results", category: categories[index % categories.length].id, query: label })}
-            >
+        <div className="popular-searches" aria-label="Búsquedas populares">
+          {popularSearches.map(({ label, ...search }) => (
+            <button key={label} onClick={() => navigate({ name: "results", ...search })}>
               {label}
             </button>
           ))}
@@ -384,7 +444,7 @@ function CategoryRail({ navigate }) {
       <div className="category-grid">
         {categories.map((category) => (
           <button key={category.id} className="category-card" onClick={() => navigate({ name: "results", category: category.id })}>
-            <img src={providers.find((provider) => provider.category === category.id)?.image} alt={category.label} />
+            <img src={providers.find((provider) => provider.category === category.id)?.image} alt="" />
             <span className="category-icon" style={{ color: category.accent }}>
               <CategoryIcon categoryId={category.id} size={24} />
             </span>
@@ -392,10 +452,10 @@ function CategoryRail({ navigate }) {
             <small>{category.hint}</small>
           </button>
         ))}
-        <button className="category-card more-card" onClick={() => navigate({ name: "results", category: "salones", query: "todos" })}>
-          <span className="more-dots">...</span>
-          <strong>Más categorías</strong>
-          <small>Descubre más opciones</small>
+        <button className="category-card more-card" onClick={() => navigate({ name: "booking", step: 1 })}>
+          <span className="more-dots" aria-hidden="true">...</span>
+          <strong>Varios servicios</strong>
+          <small>Arma una solicitud con todo lo que necesitas</small>
         </button>
       </div>
     </section>
@@ -404,17 +464,17 @@ function CategoryRail({ navigate }) {
 
 function TrustBar() {
   const items = [
-    { icon: ShieldCheck, title: "Proveedores verificados", text: "Trabajamos solo con proveedores calificados." },
-    { icon: Wallet, title: "Compara y ahorra", text: "Recibe varias cotizaciones y elige mejor." },
-    { icon: LockKeyhole, title: "Reserva con confianza", text: "Tus datos y solicitudes viajan protegidos." },
-    { icon: MessageCircle, title: "Soporte en cada paso", text: "Te acompañamos antes, durante y después." },
+    { icon: ShieldCheck, title: "Proveedores revisados", text: "Revisamos identidad y NIT antes de mostrar la insignia." },
+    { icon: Wallet, title: "Precios claros", text: "Ves el desglose completo antes de pagar. Comisión: Q0." },
+    { icon: LockKeyhole, title: "Tú decides qué compartir", text: "Tus datos solo llegan al proveedor que autorices." },
+    { icon: MessageCircle, title: "Cancelaciones claras", text: "Reglas de reembolso publicadas antes de reservar." },
   ];
 
   return (
-    <section className="trust-bar" aria-label="Beneficios de seguridad y confianza">
+    <section className="trust-bar" aria-label="Cómo protegemos tu reserva">
       {items.map((item) => (
         <article key={item.title}>
-          <span>
+          <span aria-hidden="true">
             <item.icon size={24} />
           </span>
           <div>
@@ -427,9 +487,17 @@ function TrustBar() {
   );
 }
 
+function VerifiedBadge({ size = 18 }) {
+  return (
+    <span className="verified" role="img" aria-label="Proveedor revisado" title="Proveedor revisado: identidad y NIT verificados">
+      <BadgeCheck size={size} aria-hidden="true" />
+    </span>
+  );
+}
+
 function HomePage({ navigate }) {
   return (
-    <main>
+    <main id="contenido">
       <HeroSearch onSearch={(payload) => navigate({ name: "results", ...payload })} navigate={navigate} />
       <CategoryRail navigate={navigate} />
       <TrustBar />
@@ -465,14 +533,14 @@ function FeaturedProviders({ navigate }) {
 function ProviderTile({ provider, navigate, compact = false, favorite, onFavorite }) {
   return (
     <article className={compact ? "provider-tile compact" : "provider-tile"}>
-      <img src={provider.image} alt={provider.name} loading="lazy" />
+      <img src={provider.image} alt={provider.imageAlt} loading="lazy" />
       <div className="provider-tile-body">
         <div className="provider-row">
           <span className="mini-category">
             <CategoryIcon categoryId={provider.category} size={15} />
             {provider.categoryLabel}
           </span>
-          {provider.verified && <BadgeCheck className="verified" size={18} />}
+          {provider.verified && <VerifiedBadge />}
         </div>
         <h3>{provider.name}</h3>
         <p>
@@ -480,20 +548,17 @@ function ProviderTile({ provider, navigate, compact = false, favorite, onFavorit
           {provider.location}
         </p>
         <div className="provider-meta">
-          <span>
-            <Star size={14} fill="currentColor" />
-            {provider.rating}
-          </span>
+          <span>Responde en ~{provider.responseTime}</span>
           <span>Desde {formatCurrency(provider.price)}</span>
         </div>
         <div className="provider-actions">
           <button className="btn primary" onClick={() => navigate({ name: "detail", providerId: provider.id })}>
-            Ver detalles
+            Ver detalles<span className="sr-only"> de {provider.name}</span>
           </button>
           {onFavorite && (
-            <button className="btn secondary icon-label" onClick={() => onFavorite(provider.id)}>
+            <button className="btn secondary icon-label" aria-pressed={favorite} onClick={() => onFavorite(provider.id)}>
               <Heart size={16} fill={favorite ? "currentColor" : "none"} />
-              Guardar
+              {favorite ? "Guardado" : "Guardar"}
             </button>
           )}
         </div>
@@ -502,12 +567,20 @@ function ProviderTile({ provider, navigate, compact = false, favorite, onFavorit
   );
 }
 
+const defaultFilters = { location: "Todos", eventType: "Todos", min: 0, max: 50000 };
+
 function FilterPanel({ filters, setFilters, applyFilters }) {
   return (
-    <aside className="filter-panel">
+    <aside className="filter-panel" aria-label="Filtros">
       <div className="filter-head">
         <strong>Filtrar resultados</strong>
-        <button onClick={() => setFilters({ location: "Guatemala", eventType: "Todos", min: 1000, max: 50000, rating: 0 })}>
+        <button
+          type="button"
+          onClick={() => {
+            setFilters(defaultFilters);
+            applyFilters(defaultFilters);
+          }}
+        >
           Limpiar filtros
         </button>
       </div>
@@ -517,7 +590,7 @@ function FilterPanel({ filters, setFilters, applyFilters }) {
           Ubicación
         </span>
         <select value={filters.location} onChange={(event) => setFilters({ ...filters, location: event.target.value })}>
-          <option>Todos</option>
+          <option value="Todos">Todo el país</option>
           {departments.map((department) => (
             <option key={department}>{department}</option>
           ))}
@@ -538,7 +611,7 @@ function FilterPanel({ filters, setFilters, applyFilters }) {
       <label>
         <span>
           <Wallet size={15} />
-          Rango de precio
+          Precio máximo
         </span>
         <input
           type="range"
@@ -546,29 +619,12 @@ function FilterPanel({ filters, setFilters, applyFilters }) {
           max="50000"
           step="500"
           value={filters.max}
+          aria-valuetext={formatCurrency(filters.max)}
           onChange={(event) => setFilters({ ...filters, max: Number(event.target.value) })}
         />
         <small>Hasta {formatCurrency(filters.max)}</small>
       </label>
-      <label>
-        <span>
-          <Star size={15} />
-          Calificación mínima
-        </span>
-        <div className="rating-filter">
-          {[0, 3, 4, 4.5].map((rating) => (
-            <button
-              key={rating}
-              className={filters.rating === rating ? "active" : ""}
-              onClick={() => setFilters({ ...filters, rating })}
-              type="button"
-            >
-              {rating === 0 ? "Todas" : `${rating}+`}
-            </button>
-          ))}
-        </div>
-      </label>
-      <button className="btn outlined full" onClick={applyFilters}>
+      <button className="btn outlined full" type="button" onClick={() => applyFilters(filters)}>
         Aplicar filtros
       </button>
     </aside>
@@ -576,69 +632,69 @@ function FilterPanel({ filters, setFilters, applyFilters }) {
 }
 
 function ResultsPage({ route, navigate, favorites, toggleFavorite }) {
-  const [filters, setFilters] = useState({
-    location: route.location || "Guatemala",
-    eventType: "Todos",
-    min: 1000,
-    max: 50000,
-    rating: 0,
-  });
+  const initialFilters = {
+    ...defaultFilters,
+    location: route.location || defaultFilters.location,
+    eventType: route.eventType || defaultFilters.eventType,
+  };
+  const [filters, setFilters] = useState(initialFilters);
   const [sort, setSort] = useState("relevance");
   const [mobileFilters, setMobileFilters] = useState(false);
-  const [appliedFilters, setAppliedFilters] = useState(filters);
+  const [appliedFilters, setAppliedFilters] = useState(initialFilters);
 
-  useEffect(() => {
-    setAppliedFilters((current) => ({ ...current, location: route.location || current.location || "Guatemala" }));
-  }, [route.location]);
+  const inCategory = providers.filter((provider) => provider.category === route.category);
 
   const listed = useMemo(() => {
-    const base = providers
-      .filter((provider) => provider.category === route.category)
-      .filter(
-        (provider) =>
-          appliedFilters.location === "Todos" ||
-          appliedFilters.location === "Guatemala" ||
-          provider.department === appliedFilters.location ||
-          provider.location.includes(appliedFilters.location),
-      )
+    const base = inCategory
+      .filter((provider) => appliedFilters.location === "Todos" || provider.department === appliedFilters.location)
       .filter((provider) => appliedFilters.eventType === "Todos" || provider.tags.includes(appliedFilters.eventType))
-      .filter((provider) => provider.price >= appliedFilters.min && provider.price <= appliedFilters.max)
-      .filter((provider) => provider.rating >= appliedFilters.rating);
+      .filter((provider) => provider.price >= appliedFilters.min && provider.price <= appliedFilters.max);
 
     return [...base].sort((a, b) => {
       if (sort === "price") return a.price - b.price;
-      if (sort === "rating") return b.rating - a.rating;
-      return Number(b.featured) - Number(a.featured) || b.reviews - a.reviews;
+      if (sort === "price-desc") return b.price - a.price;
+      return Number(b.featured) - Number(a.featured) || a.providerNumber - b.providerNumber;
     });
   }, [appliedFilters, route.category, sort]);
 
+  const where = appliedFilters.location === "Todos" ? "todo el país" : appliedFilters.location;
+
   return (
-    <main className="results-layout">
-      <div className="breadcrumb">
-        <Home size={15} /> Inicio <span>/</span> Resultados de búsqueda
-      </div>
+    <main className="results-layout" id="contenido">
+      <nav className="breadcrumb" aria-label="Ruta de navegación">
+        <Home size={15} aria-hidden="true" /> Inicio <span aria-hidden="true">/</span> Resultados de búsqueda
+      </nav>
       <div className="results-grid">
-        <div className={`filters-shell ${mobileFilters ? "open" : ""}`}>
-          <FilterPanel filters={filters} setFilters={setFilters} applyFilters={() => setAppliedFilters(filters)} />
+        <div className={`filters-shell ${mobileFilters ? "open" : ""}`} id="panel-filtros">
+          <FilterPanel filters={filters} setFilters={setFilters} applyFilters={setAppliedFilters} />
         </div>
         <section className="results-panel">
           <div className="results-title">
             <div>
               <span className="eyebrow">Catálogo de proveedores</span>
-              <h1>Resultados para "{slugLabel(route.category)} en Guatemala"</h1>
-              <p>{listed.length} proveedores encontrados de 20 disponibles en esta categoría.</p>
+              <h1>
+                {slugLabel(route.category)} en {where}
+              </h1>
+              <p aria-live="polite">
+                {listed.length} de {inCategory.length} proveedores de esta categoría coinciden con tu búsqueda.
+              </p>
             </div>
             <div className="sort-row">
-              <button className="btn secondary mobile-filter-btn" onClick={() => setMobileFilters((value) => !value)}>
+              <button
+                className="btn secondary mobile-filter-btn"
+                aria-expanded={mobileFilters}
+                aria-controls="panel-filtros"
+                onClick={() => setMobileFilters((value) => !value)}
+              >
                 <Filter size={16} />
                 Filtros
               </button>
               <label>
                 Ordenar por
                 <select value={sort} onChange={(event) => setSort(event.target.value)}>
-                  <option value="relevance">Relevancia</option>
-                  <option value="price">Precio menor</option>
-                  <option value="rating">Mejor calificación</option>
+                  <option value="relevance">Destacados primero</option>
+                  <option value="price">Precio: menor a mayor</option>
+                  <option value="price-desc">Precio: mayor a menor</option>
                 </select>
               </label>
             </div>
@@ -646,11 +702,11 @@ function ResultsPage({ route, navigate, favorites, toggleFavorite }) {
           <div className="result-list">
             {listed.map((provider) => (
               <article className="result-card" key={provider.id}>
-                <img src={provider.image} alt={provider.name} loading="lazy" />
+                <img src={provider.image} alt={provider.imageAlt} loading="lazy" />
                 <div className="result-copy">
                   <div className="provider-row">
                     {provider.featured && <span className="badge">Destacado</span>}
-                    {provider.verified && <BadgeCheck className="verified" size={17} />}
+                    {provider.verified && <VerifiedBadge size={17} />}
                   </div>
                   <h2>{provider.name}</h2>
                   <p>
@@ -659,10 +715,9 @@ function ResultsPage({ route, navigate, favorites, toggleFavorite }) {
                   </p>
                   <p>
                     <Users size={15} />
-                    Hasta {provider.capacity}
+                    {provider.capacity}
                     <span className="dot" />
-                    <Star size={15} fill="currentColor" />
-                    {provider.rating} ({provider.reviews} reseñas)
+                    Responde en ~{provider.responseTime}
                   </p>
                   <div className="tag-row">
                     {provider.tags.slice(0, 4).map((tag) => (
@@ -673,13 +728,18 @@ function ResultsPage({ route, navigate, favorites, toggleFavorite }) {
                 <div className="result-price">
                   <small>Desde</small>
                   <strong>{formatCurrency(provider.price)}</strong>
-                  <span>por evento</span>
+                  <span>precio referencial por evento</span>
                   <button className="btn primary" onClick={() => navigate({ name: "detail", providerId: provider.id })}>
-                    Ver detalles
+                    Ver detalles<span className="sr-only"> de {provider.name}</span>
                   </button>
-                  <button className="btn secondary" onClick={() => toggleFavorite(provider.id)}>
+                  <button
+                    className="btn secondary"
+                    aria-pressed={favorites.includes(provider.id)}
+                    onClick={() => toggleFavorite(provider.id)}
+                  >
                     <Heart size={16} fill={favorites.includes(provider.id) ? "currentColor" : "none"} />
-                    Guardar
+                    {favorites.includes(provider.id) ? "Guardado" : "Guardar"}
+                    <span className="sr-only"> {provider.name}</span>
                   </button>
                 </div>
               </article>
@@ -701,12 +761,44 @@ function ResultsPage({ route, navigate, favorites, toggleFavorite }) {
 function DetailPage({ route, navigate, favorites, toggleFavorite }) {
   const provider = providers.find((item) => item.id === route.providerId) ?? providers[0];
   const [tab, setTab] = useState("descripcion");
+  const [shareStatus, setShareStatus] = useState("");
   const [quickQuote, setQuickQuote] = useState({
     date: "",
     eventType: "Boda",
-    guests: "150",
+    guests: "",
   });
-  const tabs = ["descripcion", "servicios", "paquetes", "reseñas", "ubicación"];
+  const tabs = [
+    ["descripcion", "Descripción"],
+    ["servicios", "Servicios"],
+    ["paquetes", "Paquetes"],
+    ["resenas", "Reseñas"],
+    ["ubicacion", "Ubicación"],
+  ];
+
+  const share = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: provider.name, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setShareStatus("Enlace copiado");
+    } catch {
+      setShareStatus("");
+    }
+  };
+
+  // Flechas izquierda/derecha para moverse entre pestañas (patrón ARIA de tabs).
+  const onTabKeyDown = (event) => {
+    const index = tabs.findIndex(([id]) => id === tab);
+    const delta = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    const nextId = tabs[(index + delta + tabs.length) % tabs.length][0];
+    setTab(nextId);
+    document.getElementById(`tab-${nextId}`)?.focus();
+  };
 
   const submitQuickQuote = (event) => {
     event.preventDefault();
@@ -723,20 +815,24 @@ function DetailPage({ route, navigate, favorites, toggleFavorite }) {
   };
 
   return (
-    <main className="detail-page">
+    <main className="detail-page" id="contenido">
       <div className="detail-topline">
         <button className="link-btn" onClick={() => navigate({ name: "results", category: provider.category })}>
           <ArrowLeft size={16} />
           Volver a explorar
         </button>
         <div>
-          <button className="ghost icon-label">
+          <button className="ghost icon-label" onClick={share}>
             <Share2 size={17} />
             Compartir
           </button>
-          <button className="ghost icon-label" onClick={() => toggleFavorite(provider.id)}>
+          <span className="sr-only" role="status">
+            {shareStatus}
+          </span>
+          {shareStatus && <small className="share-status">{shareStatus}</small>}
+          <button className="ghost icon-label" aria-pressed={favorites.includes(provider.id)} onClick={() => toggleFavorite(provider.id)}>
             <Heart size={17} fill={favorites.includes(provider.id) ? "currentColor" : "none"} />
-            Guardar
+            {favorites.includes(provider.id) ? "Guardado" : "Guardar"}
           </button>
         </div>
       </div>
@@ -744,33 +840,28 @@ function DetailPage({ route, navigate, favorites, toggleFavorite }) {
         <section className="detail-main">
           <div className="gallery">
             <div className="gallery-main">
-              <img src={provider.gallery[0]} alt={provider.name} />
-              <button>
-                <ImageIcon size={16} />
-                Ver todas las fotos ({provider.gallery.length * 7})
-              </button>
+              <img src={provider.gallery[0]} alt={provider.imageAlt} />
             </div>
             <div className="gallery-stack">
-              {provider.gallery.slice(1, 4).map((image, index) => (
+              {provider.gallery.slice(1, 4).map((image) => (
                 <div className="gallery-small" key={image}>
-                  <img src={image} alt={`${provider.name} galería ${index + 2}`} />
-                  {index === 2 && <span>+25</span>}
+                  <img src={image} alt={provider.imageAlt} />
                 </div>
               ))}
             </div>
           </div>
+          <p className="image-note">Fotos de referencia de Unsplash; no corresponden a este proveedor.</p>
           <div className="detail-heading">
             <div>
               <h1>
                 {provider.name}
-                {provider.verified && <BadgeCheck size={24} className="verified" />}
+                {provider.verified && <VerifiedBadge size={24} />}
               </h1>
               <p className="rating-line">
-                <Star size={17} fill="currentColor" />
-                {provider.rating} ({provider.reviews} reseñas)
-                <span />
                 <MapPin size={17} />
                 {provider.location}, Guatemala
+                <span />
+                Responde en ~{provider.responseTime}
               </p>
             </div>
             <button className="btn primary" onClick={() => navigate({ name: "booking", step: 2, providerId: provider.id })}>
@@ -780,26 +871,37 @@ function DetailPage({ route, navigate, favorites, toggleFavorite }) {
           </div>
           <div className="detail-highlights">
             <span>
-              <Star size={16} />
-              Más de 10 años de experiencia
+              <CategoryIcon categoryId={provider.category} size={16} />
+              {provider.categoryLabel}
             </span>
             <span>
-              <ShieldCheck size={16} />
-              Eventos al aire libre y bajo techo
+              <MapPin size={16} />
+              Cobertura: {provider.department}
             </span>
             <span>
               <Users size={16} />
               Capacidad: {provider.capacity}
             </span>
           </div>
-          <div className="tabs" role="tablist">
-            {tabs.map((item) => (
-              <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-                {item}
+          <div className="tabs" role="tablist" aria-label="Información del proveedor" onKeyDown={onTabKeyDown}>
+            {tabs.map(([id, label]) => (
+              <button
+                key={id}
+                id={`tab-${id}`}
+                role="tab"
+                aria-selected={tab === id}
+                aria-controls="panel-detalle"
+                tabIndex={tab === id ? 0 : -1}
+                className={tab === id ? "active" : ""}
+                onClick={() => setTab(id)}
+              >
+                {label}
               </button>
             ))}
           </div>
-          <DetailTab tab={tab} provider={provider} />
+          <div id="panel-detalle" role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={0}>
+            <DetailTab tab={tab} provider={provider} />
+          </div>
         </section>
         <aside className="quote-card">
           <h2>Solicita una cotización rápida</h2>
@@ -809,7 +911,7 @@ function DetailPage({ route, navigate, favorites, toggleFavorite }) {
               <span>Fecha del evento</span>
               <input
                 type="date"
-                min={minEventDate}
+                min={todayISO()}
                 value={quickQuote.date}
                 onChange={(event) => setQuickQuote({ ...quickQuote, date: event.target.value })}
                 required
@@ -841,7 +943,7 @@ function DetailPage({ route, navigate, favorites, toggleFavorite }) {
           </form>
           <small className="secure-line">
             <ShieldCheck size={15} />
-            Tu información está segura y protegida.
+            Solicitar una cotización es gratis y no te compromete a pagar.
           </small>
         </aside>
       </div>
@@ -891,31 +993,27 @@ function DetailTab({ tab, provider }) {
     );
   }
 
-  if (tab === "reseñas") {
+  if (tab === "resenas") {
     return (
-      <div className="tab-panel reviews">
-        {["Excelente comunicación y montaje impecable.", "La propuesta fue clara y llegó rápido.", "Muy buen balance entre precio y calidad."].map((review, index) => (
-          <article key={review}>
-            <div>
-              <strong>{["Andrea M.", "Carlos R.", "Sofía P."][index]}</strong>
-              <span>
-                <Star size={15} fill="currentColor" />
-                4.{9 - index}
-              </span>
-            </div>
-            <p>{review}</p>
-          </article>
-        ))}
+      <div className="tab-panel empty-state">
+        <Star size={36} aria-hidden="true" />
+        <h3>Aún no hay reseñas verificadas</h3>
+        <p>
+          Solo pueden opinar clientes con una reserva completada con {provider.name}. No publicamos reseñas inventadas ni pagadas.
+        </p>
       </div>
     );
   }
 
-  if (tab === "ubicación") {
+  if (tab === "ubicacion") {
     return (
       <div className="tab-panel map-panel">
         <MapPin size={28} />
         <h3>{provider.address}</h3>
-        <p>Zona de cobertura: {provider.department}, Guatemala. Los costos de transporte se confirman en la cotización.</p>
+        <p>
+          Zona de cobertura: {provider.department}, Guatemala. Si tu evento está fuera de esta zona, el proveedor indicará el costo de
+          transporte en la cotización, antes de que pagues cualquier monto.
+        </p>
       </div>
     );
   }
@@ -939,17 +1037,27 @@ function DetailTab({ tab, provider }) {
 
 function BookingPage({ route, navigate }) {
   const selectedProvider = providers.find((provider) => provider.id === route.providerId);
-  const [step, setStep] = useState(route.step || 1);
   const [form, setForm] = useState({
     eventType: route.draft?.eventType || "Boda",
     date: route.draft?.date || "",
-    guests: route.draft?.guests || "100",
-    location: "Ciudad de Guatemala",
-    budget: "15000",
+    guests: route.draft?.guests || "",
+    location: selectedProvider?.department || "Guatemala",
+    budget: "",
     services: selectedProvider ? [selectedProvider.category] : ["salones"],
     providerId: selectedProvider?.id || "",
     payment: "reserva",
+    shareConsent: false,
   });
+  const [errors, setErrors] = useState({});
+  const [done, setDone] = useState(false);
+  // Si llega desde "Solicitar cotización" con fecha e invitados, empieza en el paso 2.
+  const detailsComplete = Boolean(form.date && Number(form.guests) > 0);
+  const [step, setStep] = useState(route.step && detailsComplete ? route.step : 1);
+  const headingRef = useRef(null);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [step, done]);
 
   const recommended = useMemo(() => {
     const service = form.services[0] || "salones";
@@ -963,41 +1071,74 @@ function BookingPage({ route, navigate }) {
     }));
   };
 
-  const next = () => setStep((value) => Math.min(value + 1, 4));
+  const validateDetails = () => {
+    const found = {};
+    if (!form.date) found.date = "Elige la fecha del evento.";
+    else if (form.date < todayISO()) found.date = "La fecha no puede estar en el pasado.";
+    if (!(Number(form.guests) > 0)) found.guests = "Indica cuántos invitados esperas.";
+    if (form.services.length === 0) found.services = "Elige al menos un servicio.";
+    setErrors(found);
+    return Object.keys(found).length === 0;
+  };
+
+  const next = () => {
+    if (step === 1 && !validateDetails()) return;
+    if (step === 3 && !form.shareConsent) {
+      setErrors({ shareConsent: "Necesitamos tu autorización para enviar la solicitud al proveedor." });
+      return;
+    }
+    setErrors({});
+    setStep((value) => Math.min(value + 1, 4));
+  };
   const back = () => setStep((value) => Math.max(value - 1, 1));
+  const provider = providers.find((item) => item.id === form.providerId);
 
   return (
-    <main className="booking-page">
+    <main className="booking-page" id="contenido">
       <button className="link-btn" onClick={() => navigate({ name: "home" })}>
         <ArrowLeft size={16} />
         Volver a explorar
       </button>
       <div className="booking-title">
         <div>
-          <h1>Nueva reserva</h1>
-          <p>Cuéntanos los detalles de tu evento para encontrar los proveedores perfectos para ti.</p>
+          <h1>Nueva solicitud de reserva</h1>
+          <p>Cuéntanos los detalles de tu evento. No se cobra nada hasta que apruebes la cotización final.</p>
         </div>
-        <ProgressSteps step={step} />
+        <ProgressSteps step={done ? 5 : step} />
       </div>
       <div className="booking-grid">
-        <section className="booking-card">
-          {step === 1 && <EventDetails form={form} setForm={setForm} toggleService={toggleService} next={next} />}
-          {step === 2 && <ProviderSelect form={form} setForm={setForm} providers={recommended} next={next} back={back} />}
-          {step === 3 && <Confirmation form={form} provider={providers.find((provider) => provider.id === form.providerId)} next={next} back={back} />}
-          {step === 4 && <Payment form={form} setForm={setForm} navigate={navigate} back={back} />}
+        <section className="booking-card" aria-labelledby="paso-titulo">
+          {done ? (
+            <BookingDone provider={provider} navigate={navigate} headingRef={headingRef} />
+          ) : (
+            <>
+              {step === 1 && (
+                <EventDetails form={form} setForm={setForm} toggleService={toggleService} next={next} errors={errors} headingRef={headingRef} />
+              )}
+              {step === 2 && (
+                <ProviderSelect form={form} setForm={setForm} providers={recommended} next={next} back={back} headingRef={headingRef} />
+              )}
+              {step === 3 && (
+                <Confirmation form={form} setForm={setForm} provider={provider} next={next} back={back} errors={errors} headingRef={headingRef} />
+              )}
+              {step === 4 && (
+                <Payment form={form} setForm={setForm} provider={provider} back={back} finish={() => setDone(true)} headingRef={headingRef} />
+              )}
+            </>
+          )}
         </section>
         <aside className="summary-card">
           <h2>Resumen</h2>
           <SummaryRow icon={Palette} label="Tipo de evento" value={form.eventType} />
           <SummaryRow icon={Calendar} label="Fecha del evento" value={form.date || "--"} />
           <SummaryRow icon={Users} label="Número de invitados" value={form.guests || "--"} />
-          <SummaryRow icon={MapPin} label="Ubicación" value={form.location || "--"} />
-          <SummaryRow icon={Wallet} label="Presupuesto aproximado" value={formatCurrency(Number(form.budget || 0))} />
-          <SummaryRow icon={CheckCircle} label="Servicios necesarios" value={form.services.map(slugLabel).join(", ")} />
+          <SummaryRow icon={MapPin} label="Departamento" value={form.location || "--"} />
+          <SummaryRow icon={Wallet} label="Presupuesto aproximado" value={form.budget ? formatCurrency(Number(form.budget)) : "Sin indicar"} />
+          <SummaryRow icon={CheckCircle} label="Servicios necesarios" value={form.services.map(slugLabel).join(", ") || "--"} />
           <div className="secure-box">
             <LockKeyhole size={22} />
-            <span>Información segura</span>
-            <small>Tus datos se comparten solo con proveedores verificados.</small>
+            <span>Tú controlas tus datos</span>
+            <small>Solo enviamos tu solicitud al proveedor que elijas y autorices en el paso de confirmación.</small>
           </div>
         </aside>
       </div>
@@ -1005,28 +1146,39 @@ function BookingPage({ route, navigate }) {
   );
 }
 
-function ProgressSteps({ step }) {
-  const labels = ["Detalles del evento", "Seleccionar proveedor", "Confirmación", "Pago"];
+function FieldError({ id, message }) {
+  if (!message) return null;
   return (
-    <div className="progress-steps">
-      {labels.map((label, index) => (
-        <div key={label} className={step >= index + 1 ? "active" : ""}>
-          <span>{index + 1}</span>
-          <small>{label}</small>
-        </div>
-      ))}
-    </div>
+    <small className="field-error" id={id} role="alert">
+      {message}
+    </small>
   );
 }
 
-function EventDetails({ form, setForm, toggleService, next }) {
+function ProgressSteps({ step }) {
+  const labels = ["Detalles del evento", "Seleccionar proveedor", "Confirmación", "Anticipo"];
+  return (
+    <ol className="progress-steps" aria-label="Progreso de la solicitud">
+      {labels.map((label, index) => (
+        <li key={label} className={step >= index + 1 ? "active" : ""} aria-current={step === index + 1 ? "step" : undefined}>
+          <span aria-hidden="true">{index + 1}</span>
+          <small>{label}</small>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function EventDetails({ form, setForm, toggleService, next, errors, headingRef }) {
   return (
     <div>
-      <h2>Detalles del evento</h2>
-      <p>Completa la información para ayudarte a encontrar las mejores opciones.</p>
+      <h2 id="paso-titulo" tabIndex={-1} ref={headingRef}>
+        Detalles del evento
+      </h2>
+      <p>Los campos con * son obligatorios.</p>
       <div className="form-grid">
         <label>
-          <span>Tipo de evento</span>
+          <span>Tipo de evento *</span>
           <select value={form.eventType} onChange={(event) => setForm({ ...form, eventType: event.target.value })}>
             {eventTypes.map((type) => (
               <option key={type}>{type}</option>
@@ -1034,19 +1186,31 @@ function EventDetails({ form, setForm, toggleService, next }) {
           </select>
         </label>
         <label>
-          <span>Fecha del evento</span>
-          <input type="date" min={minEventDate} value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
+          <span>Fecha del evento *</span>
+          <input
+            type="date"
+            min={todayISO()}
+            value={form.date}
+            aria-invalid={Boolean(errors.date)}
+            aria-describedby={errors.date ? "error-fecha" : undefined}
+            onChange={(event) => setForm({ ...form, date: event.target.value })}
+          />
+          <FieldError id="error-fecha" message={errors.date} />
         </label>
         <label>
-          <span>Número de invitados</span>
+          <span>Número de invitados *</span>
           <input
             inputMode="numeric"
+            placeholder="Ej. 150"
             value={form.guests}
+            aria-invalid={Boolean(errors.guests)}
+            aria-describedby={errors.guests ? "error-invitados" : undefined}
             onChange={(event) => setForm({ ...form, guests: event.target.value.replace(/\D/g, "").slice(0, 4) })}
           />
+          <FieldError id="error-invitados" message={errors.guests} />
         </label>
         <label>
-          <span>Ubicación del evento</span>
+          <span>Departamento del evento *</span>
           <select value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })}>
             {departments.map((department) => (
               <option key={department}>{department}</option>
@@ -1054,24 +1218,32 @@ function EventDetails({ form, setForm, toggleService, next }) {
           </select>
         </label>
         <label className="wide">
-          <span>Presupuesto aproximado</span>
+          <span>Presupuesto aproximado en quetzales (opcional)</span>
           <input
             inputMode="numeric"
+            placeholder="Ayuda al proveedor a ajustar su propuesta"
             value={form.budget}
             onChange={(event) => setForm({ ...form, budget: event.target.value.replace(/\D/g, "").slice(0, 7) })}
           />
         </label>
       </div>
-      <h3>Servicios necesarios</h3>
-      <div className="service-select">
+      <h3 id="servicios-titulo">Servicios necesarios *</h3>
+      <div className="service-select" role="group" aria-labelledby="servicios-titulo">
         {categories.map((category) => (
-          <button key={category.id} className={form.services.includes(category.id) ? "active" : ""} onClick={() => toggleService(category.id)} type="button">
-            <span>{form.services.includes(category.id) && <CheckCircle size={15} />}</span>
+          <button
+            key={category.id}
+            className={form.services.includes(category.id) ? "active" : ""}
+            aria-pressed={form.services.includes(category.id)}
+            onClick={() => toggleService(category.id)}
+            type="button"
+          >
+            <span aria-hidden="true">{form.services.includes(category.id) && <CheckCircle size={15} />}</span>
             <CategoryIcon categoryId={category.id} />
             {category.label}
           </button>
         ))}
       </div>
+      <FieldError id="error-servicios" message={errors.services} />
       <div className="booking-actions">
         <button className="btn primary" onClick={next}>
           Siguiente
@@ -1082,20 +1254,27 @@ function EventDetails({ form, setForm, toggleService, next }) {
   );
 }
 
-function ProviderSelect({ form, setForm, providers: suggestedProviders, next, back }) {
+function ProviderSelect({ form, setForm, providers: suggestedProviders, next, back, headingRef }) {
+  const options = suggestedProviders.some((provider) => provider.id === form.providerId)
+    ? suggestedProviders
+    : [providers.find((provider) => provider.id === form.providerId), ...suggestedProviders].filter(Boolean).slice(0, 4);
+
   return (
     <div>
-      <h2>Seleccionar proveedor</h2>
+      <h2 id="paso-titulo" tabIndex={-1} ref={headingRef}>
+        Seleccionar proveedor
+      </h2>
       <p>Estas opciones coinciden con el servicio principal de tu solicitud.</p>
       <div className="select-provider-list">
-        {suggestedProviders.map((provider) => (
+        {options.map((provider) => (
           <button
             type="button"
             className={form.providerId === provider.id ? "provider-option active" : "provider-option"}
+            aria-pressed={form.providerId === provider.id}
             key={provider.id}
             onClick={() => setForm({ ...form, providerId: provider.id })}
           >
-            <img src={provider.image} alt={provider.name} />
+            <img src={provider.image} alt="" />
             <span>
               <strong>{provider.name}</strong>
               <small>{provider.location} · {formatCurrency(provider.price)}</small>
@@ -1117,18 +1296,34 @@ function ProviderSelect({ form, setForm, providers: suggestedProviders, next, ba
   );
 }
 
-function Confirmation({ form, provider, next, back }) {
+function Confirmation({ form, setForm, provider, next, back, errors, headingRef }) {
   return (
     <div className="confirmation">
-      <h2>Confirmación</h2>
-      <p>Revisa tu solicitud antes de pasar al pago de reserva.</p>
+      <h2 id="paso-titulo" tabIndex={-1} ref={headingRef}>
+        Confirmación
+      </h2>
+      <p>Revisa tu solicitud antes de enviarla.</p>
       <div className="confirm-box">
         <SummaryRow icon={Palette} label="Evento" value={form.eventType} />
-        <SummaryRow icon={Calendar} label="Fecha" value={form.date || "Por confirmar"} />
+        <SummaryRow icon={Calendar} label="Fecha" value={form.date} />
         <SummaryRow icon={Users} label="Invitados" value={form.guests} />
         <SummaryRow icon={Building2} label="Proveedor" value={provider?.name || "Sin proveedor"} />
-        <SummaryRow icon={Wallet} label="Presupuesto" value={formatCurrency(Number(form.budget || 0))} />
+        <SummaryRow icon={Wallet} label="Presupuesto" value={form.budget ? formatCurrency(Number(form.budget)) : "Sin indicar"} />
       </div>
+      <label className="consent-check">
+        <input
+          type="checkbox"
+          checked={form.shareConsent}
+          aria-invalid={Boolean(errors.shareConsent)}
+          aria-describedby={errors.shareConsent ? "error-consentimiento" : undefined}
+          onChange={(event) => setForm({ ...form, shareConsent: event.target.checked })}
+        />
+        <span>
+          Autorizo enviar estos datos del evento a <strong>{provider?.name || "el proveedor elegido"}</strong> para recibir una cotización,
+          según la <a href="#/legal?page=privacidad">Política de privacidad</a>.
+        </span>
+      </label>
+      <FieldError id="error-consentimiento" message={errors.shareConsent} />
       <div className="booking-actions split">
         <button className="btn secondary" onClick={back}>
           Atrás
@@ -1142,32 +1337,95 @@ function Confirmation({ form, provider, next, back }) {
   );
 }
 
-function Payment({ form, setForm, navigate, back }) {
+const DEPOSIT_RATE = 0.3;
+
+function Payment({ form, setForm, provider, back, finish, headingRef }) {
+  const base = provider?.price ?? 0;
+  const deposit = Math.round(base * DEPOSIT_RATE);
+  const dueNow = form.payment === "reserva" ? deposit : base;
+
   return (
     <div className="payment">
-      <h2>Pago seguro</h2>
-      <p>Demo de flujo: no se procesa ningún pago real.</p>
-      <div className="payment-options">
-        {["reserva", "total"].map((option) => (
-          <button key={option} className={form.payment === option ? "active" : ""} onClick={() => setForm({ ...form, payment: option })}>
+      <h2 id="paso-titulo" tabIndex={-1} ref={headingRef}>
+        Anticipo y desglose
+      </h2>
+      {business.demoMode && <p className="demo-inline">Modo demostración: no se procesa ningún pago real.</p>}
+      <div className="payment-options" role="radiogroup" aria-label="Forma de pago">
+        {[
+          ["reserva", `Anticipo del ${DEPOSIT_RATE * 100} %`],
+          ["total", "Pagar el total"],
+        ].map(([option, label]) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={form.payment === option}
+            className={form.payment === option ? "active" : ""}
+            onClick={() => setForm({ ...form, payment: option })}
+          >
             <CreditCard size={20} />
-            {option === "reserva" ? "Pagar reserva" : "Pagar total"}
+            {label}
           </button>
         ))}
       </div>
+      <dl className="price-breakdown">
+        <div>
+          <dt>Precio referencial de {provider?.name}</dt>
+          <dd>{formatCurrency(base)}</dd>
+        </div>
+        <div>
+          <dt>Comisión de la plataforma</dt>
+          <dd>{formatCurrency(0)}</dd>
+        </div>
+        <div>
+          <dt>Transporte fuera de {provider?.department}</dt>
+          <dd>Se cotiza aparte; nunca se cobra sin tu aprobación</dd>
+        </div>
+        <div className="total">
+          <dt>{form.payment === "reserva" ? "Pagarías hoy (anticipo)" : "Pagarías hoy"}</dt>
+          <dd>{formatCurrency(dueNow)}</dd>
+        </div>
+      </dl>
+      <p className="fine-print">
+        El proveedor confirmará el total final con impuestos antes de cualquier cobro. Consulta la{" "}
+        <a href="#/legal?page=reembolsos">Política de reembolsos y cancelaciones</a>.
+      </p>
       <div className="security-notice">
         <LockKeyhole size={22} />
-        <p>La interfaz valida campos, evita HTML inyectado y no guarda tarjetas. En producción se conectaría un proveedor PCI DSS.</p>
+        <p>No guardamos datos de tarjeta. Los pagos se procesarán con un proveedor certificado PCI DSS.</p>
       </div>
       <div className="booking-actions split">
         <button className="btn secondary" onClick={back}>
           Atrás
         </button>
-        <button className="btn primary" onClick={() => navigate({ name: "dashboard", tab: "reservas" })}>
-          Finalizar reserva
+        <button className="btn primary" onClick={finish}>
+          Enviar solicitud
           <CheckCircle size={16} />
         </button>
       </div>
+    </div>
+  );
+}
+
+function BookingDone({ provider, navigate, headingRef }) {
+  return (
+    <div className="booking-done">
+      <CheckCircle size={44} aria-hidden="true" />
+      <h2 id="paso-titulo" tabIndex={-1} ref={headingRef}>
+        Solicitud lista
+      </h2>
+      {business.demoMode ? (
+        <p>
+          Este es un proyecto de demostración: la solicitud a {provider?.name} no se envió ni se guardó, y no se cobró nada. Con la base de
+          datos conectada, aquí verías el número de solicitud y el proveedor respondería en tu panel.
+        </p>
+      ) : (
+        <p>Enviamos tu solicitud a {provider?.name}. Te avisaremos cuando responda con la cotización final.</p>
+      )}
+      <button className="btn primary" onClick={() => navigate({ name: "home" })}>
+        Volver al inicio
+        <ArrowRight size={16} />
+      </button>
     </div>
   );
 }
@@ -1186,35 +1444,36 @@ function SummaryRow({ icon: Icon, label, value }) {
   );
 }
 
-function DashboardPage({ route, navigate, favorites, toggleFavorite, currentUser }) {
-  const [tab, setTab] = useState(route.tab || "cotizaciones");
+function DashboardPage({ route, navigate, favorites, toggleFavorite, currentUser, setCurrentUser, onLogout }) {
+  const tab = route.tab || "cotizaciones";
+  const setTab = (nextTab) => navigate({ name: "dashboard", tab: nextTab });
   const favoriteProviders = providers.filter((provider) => favorites.includes(provider.id));
-
-  useEffect(() => {
-    if (route.tab) setTab(route.tab);
-  }, [route.tab]);
 
   const renderPanel = () => {
     if (tab === "reservas") return <ReservationPanel />;
     if (tab === "favoritos") return <FavoritesPanel providers={favoriteProviders} navigate={navigate} toggleFavorite={toggleFavorite} />;
     if (tab === "mensajes") return <MessagesPanel />;
-    if (tab === "perfil") return <ProfilePanel />;
-    if (tab === "configuracion") return <SettingsPanel />;
+    if (tab === "perfil") return <ProfilePanel currentUser={currentUser} />;
+    if (tab === "configuracion") return <SettingsPanel currentUser={currentUser} setCurrentUser={setCurrentUser} onLogout={onLogout} />;
     if (tab === "buscar") return <SearchPanel navigate={navigate} />;
-    if (tab === "inicio") return <DashboardHome navigate={navigate} />;
+    if (tab === "inicio") return <DashboardHome navigate={navigate} favoritesCount={favorites.length} />;
     return <QuotesPanel navigate={navigate} />;
   };
 
   return (
-    <main className="dashboard">
+    <main className="dashboard" id="contenido">
       <aside className="sidebar">
         <Logo />
-        <nav>
+        <nav aria-label="Panel de usuario">
           {dashboardItems.map((item) => (
-            <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>
-              <item.icon size={19} />
+            <button
+              key={item.id}
+              className={tab === item.id ? "active" : ""}
+              aria-current={tab === item.id ? "page" : undefined}
+              onClick={() => setTab(item.id)}
+            >
+              <item.icon size={19} aria-hidden="true" />
               {item.label}
-              {item.badge && <span className="nav-badge">{item.badge}</span>}
             </button>
           ))}
         </nav>
@@ -1229,13 +1488,19 @@ function DashboardPage({ route, navigate, favorites, toggleFavorite, currentUser
       </aside>
       <section className="dashboard-content">
         <div className="dash-top">
-          <div />
+          <button className="link-btn" onClick={() => navigate({ name: "home" })}>
+            <ArrowLeft size={16} />
+            Volver al sitio
+          </button>
           <div className="dash-icons">
-            <Bell size={20} />
-            <Mail size={20} />
-            <span className="avatar">{(currentUser?.name || "María López").slice(0, 2).toUpperCase()}</span>
-            <strong>{currentUser?.name || "María López"}</strong>
-            <ChevronDown size={16} />
+            <span className="avatar" aria-hidden="true">
+              {initials(currentUser.name)}
+            </span>
+            <strong>{currentUser.name}</strong>
+            <button className="btn secondary" onClick={onLogout}>
+              <LogOut size={16} />
+              Cerrar sesión
+            </button>
           </div>
         </div>
         {renderPanel()}
@@ -1244,21 +1509,36 @@ function DashboardPage({ route, navigate, favorites, toggleFavorite, currentUser
   );
 }
 
+function initials(name = "") {
+  return (
+    name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase() || "?"
+  );
+}
+
+function DemoDataNote() {
+  return (
+    <p className="demo-inline">
+      <Info size={16} aria-hidden="true" /> Datos de ejemplo: esta sección se llenará con tu información cuando la base de datos de cotizaciones y
+      reservas esté conectada.
+    </p>
+  );
+}
+
 function QuotesPanel({ navigate }) {
   return (
     <div>
-      <PanelTitle title="Mis cotizaciones" subtitle="Gestiona todas las cotizaciones que has recibido y enviado." />
-      <div className="dash-tabs">
-        {["Recibidas", "Enviadas", "Archivadas"].map((item, index) => (
-          <button className={index === 0 ? "active" : ""} key={item}>
-            {item}
-          </button>
-        ))}
-      </div>
+      <PanelTitle title="Mis cotizaciones" subtitle="Cotizaciones que has pedido a proveedores." />
+      <DemoDataNote />
       <div className="quote-list">
         {quotes.slice(0, 8).map((quote) => (
           <article className="quote-row" key={quote.id}>
-            <img src={quote.image} alt={quote.providerName} />
+            <img src={quote.image} alt="" />
             <div>
               <h3>{quote.providerName}</h3>
               <p>Cotización #{quote.id}</p>
@@ -1292,6 +1572,7 @@ function ReservationPanel() {
   return (
     <div>
       <PanelTitle title="Mis reservas" subtitle="Reservas activas y solicitudes en seguimiento." />
+      <DemoDataNote />
       <div className="table-panel">
         {reservations.map((reservation) => (
           <article key={reservation.id}>
@@ -1334,53 +1615,122 @@ function FavoritesPanel({ providers: favoriteProviders, navigate, toggleFavorite
 function MessagesPanel() {
   return (
     <div>
-      <PanelTitle title="Mensajes" subtitle="Conversaciones de demo con proveedores y soporte." />
-      <div className="messages">
-        {["Jardín Botánico Eventos", "Soporte Vibe", "Catering Gourmet GT"].map((name, index) => (
-          <article key={name}>
-            <span className="avatar">{name.slice(0, 2).toUpperCase()}</span>
-            <div>
-              <strong>{name}</strong>
-              <p>{index === 1 ? "Podemos ayudarte a comparar propuestas." : "Gracias por tu solicitud. Te enviamos disponibilidad hoy."}</p>
-            </div>
-            <button className="btn secondary">
-              <Send size={15} />
-              Responder
-            </button>
-          </article>
-        ))}
+      <PanelTitle title="Mensajes" subtitle="Conversaciones con proveedores y soporte." />
+      <div className="empty-state">
+        <MessageCircle size={42} aria-hidden="true" />
+        <h2>Aún no tienes mensajes</h2>
+        <p>Cuando un proveedor responda a tu solicitud, la conversación aparecerá aquí.</p>
       </div>
     </div>
   );
 }
 
-function ProfilePanel() {
+function ProfilePanel({ currentUser }) {
   return (
     <div>
-      <PanelTitle title="Perfil" subtitle="Datos de cuenta de ejemplo." />
+      <PanelTitle title="Perfil" subtitle="Datos de tu cuenta." />
       <div className="profile-card">
-        <span className="avatar large">ML</span>
+        <span className="avatar large" aria-hidden="true">
+          {initials(currentUser.name)}
+        </span>
         <div>
-          <h2>María López</h2>
-          <p>Organizadora de eventos · Ciudad de Guatemala</p>
+          <h2>{currentUser.name}</h2>
+          <p>{currentUser.email}</p>
         </div>
       </div>
     </div>
   );
 }
 
-function SettingsPanel() {
+function SettingsPanel({ currentUser, setCurrentUser, onLogout }) {
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [password, setPassword] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+
+  const toggleMarketing = async (event) => {
+    const marketingOptIn = event.target.checked;
+    setSaving(true);
+    setStatus("");
+    try {
+      const result = await updatePreferences({ marketingOptIn });
+      setCurrentUser(result.user);
+      setStatus(marketingOptIn ? "Listo: recibirás correos promocionales." : "Listo: te diste de baja de los correos promocionales.");
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitDelete = async (event) => {
+    event.preventDefault();
+    setDeleteError("");
+    try {
+      await deleteAccount({ password });
+      onLogout();
+    } catch (error) {
+      setDeleteError(error.message);
+    }
+  };
+
   return (
     <div>
-      <PanelTitle title="Configuración" subtitle="Preferencias de privacidad y notificaciones." />
+      <PanelTitle title="Configuración" subtitle="Privacidad, correos y tu cuenta." />
       <div className="settings-list">
-        {["Solicitar confirmación antes de compartir datos", "Recibir alertas de cotizaciones", "Mostrar solo proveedores verificados"].map((setting) => (
-          <label key={setting}>
-            <span>{setting}</span>
-            <input type="checkbox" defaultChecked />
-          </label>
-        ))}
+        <label>
+          <span>
+            Recibir correos promocionales
+            <small>Ofertas e ideas para eventos. Puedes darte de baja cuando quieras.</small>
+          </span>
+          <input type="checkbox" checked={Boolean(currentUser.marketingOptIn)} disabled={saving} onChange={toggleMarketing} />
+        </label>
       </div>
+      <p className="form-status" role="status">
+        {status}
+      </p>
+      <section className="danger-zone" aria-labelledby="eliminar-titulo">
+        <h2 id="eliminar-titulo">Eliminar mi cuenta</h2>
+        <p>
+          Se borran tu cuenta, tus preferencias y tus favoritos de forma permanente. Más detalles en{" "}
+          <a href="#/legal?page=eliminar-datos">Eliminación de datos</a>.
+        </p>
+        {confirmDelete ? (
+          <form onSubmit={submitDelete}>
+            <label>
+              <span>Escribe tu contraseña para confirmar</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                minLength="8"
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            {deleteError && (
+              <div className="form-error" role="alert">
+                {deleteError}
+              </div>
+            )}
+            <div className="booking-actions split">
+              <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)}>
+                Cancelar
+              </button>
+              <button type="submit" className="btn danger">
+                <Trash2 size={16} />
+                Eliminar definitivamente
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button className="btn danger-outline" onClick={() => setConfirmDelete(true)}>
+            <Trash2 size={16} />
+            Eliminar mi cuenta
+          </button>
+        )}
+      </section>
     </div>
   );
 }
@@ -1396,7 +1746,7 @@ function SearchPanel({ navigate }) {
               <CategoryIcon categoryId={category.id} />
             </span>
             <strong>{category.label}</strong>
-            <small>20 proveedores</small>
+            <small>{providers.filter((provider) => provider.category === category.id).length} proveedores</small>
           </button>
         ))}
       </div>
@@ -1404,16 +1754,17 @@ function SearchPanel({ navigate }) {
   );
 }
 
-function DashboardHome({ navigate }) {
+function DashboardHome({ navigate, favoritesCount }) {
   return (
     <div>
       <PanelTitle title="Inicio" subtitle="Resumen rápido de tu actividad." />
+      <DemoDataNote />
       <div className="stats-grid">
         {[
-          ["Cotizaciones", "12"],
-          ["Reservas", "8"],
-          ["Favoritos", "6"],
-          ["Mensajes", "2"],
+          ["Cotizaciones (ejemplo)", String(quotes.length)],
+          ["Reservas (ejemplo)", String(reservations.length)],
+          ["Favoritos", String(favoritesCount)],
+          ["Mensajes", "0"],
         ].map(([label, value]) => (
           <article key={label}>
             <strong>{value}</strong>
@@ -1439,38 +1790,41 @@ function PanelTitle({ title, subtitle }) {
 }
 
 function InfoPage({ route, navigate }) {
+  const section = route.section || "como-funciona";
   const content = {
     "como-funciona": {
       title: "Cómo funciona",
-      subtitle: "Un flujo simple para pedir propuestas, comparar y reservar con más confianza.",
+      subtitle: "Un flujo simple para pedir propuestas, comparar y reservar sin sorpresas.",
       cards: [
-        ["Explora", "Filtra proveedores por categoría, ubicación, presupuesto y calificación."],
-        ["Cotiza", "Envía una solicitud con fecha, invitados y servicios necesarios."],
-        ["Reserva", "Confirma el proveedor elegido desde un flujo seguro de demostración."],
+        ["Explora", "Filtra proveedores por categoría, departamento, tipo de evento y precio."],
+        ["Cotiza gratis", "Envía una solicitud con fecha, invitados y servicios. Tú eliges a qué proveedor se envían tus datos."],
+        ["Reserva con reglas claras", "Ves el desglose y la política de cancelación antes de pagar el anticipo del 30 %."],
       ],
     },
     blog: {
       title: "Blog",
-      subtitle: "Ideas ficticias para planificar eventos memorables.",
+      subtitle: "Guías para planificar tu evento.",
       cards: [
         ["Checklist para bodas", "Los puntos clave para coordinar salón, catering, fotos y sonido."],
         ["Tendencias de decoración", "Texturas naturales, luz cálida y rincones lounge para fotos."],
-        ["Presupuestos reales", "Cómo comparar paquetes sin perder calidad en la experiencia."],
+        ["Cómo comparar cotizaciones", "Qué revisar en cada paquete para comparar precios de forma justa."],
       ],
     },
     contacto: {
       title: "Contacto",
-      subtitle: "Canales de ejemplo para soporte y asesoría.",
+      subtitle: `Escríbenos para soporte, dudas sobre una reserva o temas de privacidad.`,
       cards: [
-        ["Correo", "hola@vibeevents.demo"],
-        ["Teléfono", "+502 2222 0101"],
-        ["Horario", "Lunes a viernes, 9:00 a. m. a 6:00 p. m."],
+        ["Correo", business.email],
+        ["Teléfono", business.phone],
+        ["Horario", business.hours],
       ],
     },
-  }[route.section || "como-funciona"];
+  }[section];
+
+  if (!content) return <InfoPage route={{ section: "como-funciona" }} navigate={navigate} />;
 
   return (
-    <main className="info-page">
+    <main className="info-page" id="contenido">
       <section>
         <span className="eyebrow">Vibe Events</span>
         <h1>{content.title}</h1>
@@ -1484,6 +1838,7 @@ function InfoPage({ route, navigate }) {
             </article>
           ))}
         </div>
+        {section === "contacto" && <BusinessCard />}
         <button className="btn primary" onClick={() => navigate({ name: "booking", step: 1 })}>
           Crear reserva
           <ArrowRight size={16} />
@@ -1493,16 +1848,63 @@ function InfoPage({ route, navigate }) {
   );
 }
 
+function BusinessCard() {
+  const rows = [
+    ["Razón social", business.legalName],
+    ["NIT", business.taxId],
+    ["Dirección", business.address],
+    ["Correo", business.email],
+    ["Teléfono", business.phone],
+    ["Horario", business.hours],
+  ];
+  return (
+    <dl className="business-card">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd className={isPending(value) ? "pending" : ""}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function AuthModal({ mode, onClose, onSuccess }) {
   const [activeMode, setActiveMode] = useState(mode || "login");
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", acceptedTerms: false, isAdult: false, marketingOptIn: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const dialogRef = useRef(null);
 
   useEffect(() => {
     setActiveMode(mode || "login");
     setError("");
   }, [mode]);
+
+  // Foco dentro del diálogo, Escape para cerrar y Tab sin salir del modal.
+  useEffect(() => {
+    const previous = document.activeElement;
+    dialogRef.current?.querySelector("input")?.focus();
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusables = [...dialogRef.current.querySelectorAll("button, input, a[href]")].filter((el) => !el.disabled);
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previous?.focus?.();
+    };
+  }, []);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -1513,7 +1915,15 @@ function AuthModal({ mode, onClose, onSuccess }) {
       const payload = {
         email: sanitize(form.email).toLowerCase(),
         password: form.password,
-        ...(activeMode === "register" ? { name: sanitize(form.name) } : {}),
+        ...(activeMode === "register"
+          ? {
+              name: sanitize(form.name),
+              acceptedTerms: form.acceptedTerms,
+              isAdult: form.isAdult,
+              marketingOptIn: form.marketingOptIn,
+              termsVersion: legalVersion,
+            }
+          : {}),
       };
       const result = activeMode === "register" ? await registerUser(payload) : await loginUser(payload);
       localStorage.setItem("vibe:token", result.token);
@@ -1527,7 +1937,14 @@ function AuthModal({ mode, onClose, onSuccess }) {
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        ref={dialogRef}
+        className="auth-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <button className="ghost icon-only modal-close" aria-label="Cerrar" onClick={onClose}>
           <X size={20} />
         </button>
@@ -1574,8 +1991,48 @@ function AuthModal({ mode, onClose, onSuccess }) {
               autoComplete={activeMode === "register" ? "new-password" : "current-password"}
               required
             />
+            {activeMode === "register" && <small className="hint">Mínimo 8 caracteres.</small>}
           </label>
-          {error && <div className="form-error">{error}</div>}
+          {activeMode === "register" && (
+            <div className="consent-group">
+              <label className="consent-check">
+                <input
+                  type="checkbox"
+                  checked={form.acceptedTerms}
+                  onChange={(event) => setForm({ ...form, acceptedTerms: event.target.checked })}
+                  required
+                />
+                <span>
+                  Acepto los{" "}
+                  <a href="#/legal?page=terminos" target="_blank" rel="noreferrer">
+                    Términos y condiciones
+                  </a>{" "}
+                  y la{" "}
+                  <a href="#/legal?page=privacidad" target="_blank" rel="noreferrer">
+                    Política de privacidad
+                  </a>
+                  . *
+                </span>
+              </label>
+              <label className="consent-check">
+                <input type="checkbox" checked={form.isAdult} onChange={(event) => setForm({ ...form, isAdult: event.target.checked })} required />
+                <span>Confirmo que tengo 18 años o más. Si eres menor, pide a tu madre, padre o tutor que cree la cuenta. *</span>
+              </label>
+              <label className="consent-check">
+                <input
+                  type="checkbox"
+                  checked={form.marketingOptIn}
+                  onChange={(event) => setForm({ ...form, marketingOptIn: event.target.checked })}
+                />
+                <span>Quiero recibir ofertas e ideas por correo (opcional, puedo darme de baja cuando quiera).</span>
+              </label>
+            </div>
+          )}
+          {error && (
+            <div className="form-error" role="alert">
+              {error}
+            </div>
+          )}
           <button className="btn primary full" type="submit" disabled={loading}>
             {loading ? "Procesando..." : activeMode === "register" ? "Crear cuenta" : "Entrar"}
             <ArrowRight size={16} />
@@ -1589,12 +2046,79 @@ function AuthModal({ mode, onClose, onSuccess }) {
   );
 }
 
-function Footer({ navigate }) {
+function CookieBanner({ onDecide }) {
+  const [custom, setCustom] = useState(false);
+  const [preferences, setPreferences] = useState(false);
+
+  return (
+    <section className="cookie-banner" role="region" aria-labelledby="cookies-titulo">
+      <div>
+        <h2 id="cookies-titulo">Tu privacidad</h2>
+        <p>
+          Usamos almacenamiento necesario para tu sesión. Con tu permiso, también recordamos tus favoritos en este navegador. No usamos
+          analítica ni publicidad. <a href="#/legal?page=cookies">Política de cookies</a>
+        </p>
+        {custom && (
+          <label className="consent-check">
+            <input type="checkbox" checked={preferences} onChange={(event) => setPreferences(event.target.checked)} />
+            <span>Preferencias: recordar mis favoritos</span>
+          </label>
+        )}
+      </div>
+      <div className="cookie-actions">
+        {/* Aceptar y rechazar tienen el mismo peso visual para no inducir la decisión. */}
+        <button className="btn secondary" onClick={() => onDecide({ preferences: false })}>
+          Rechazar opcionales
+        </button>
+        {custom ? (
+          <button className="btn secondary" onClick={() => onDecide({ preferences })}>
+            Guardar selección
+          </button>
+        ) : (
+          <button className="btn secondary" onClick={() => setCustom(true)}>
+            Configurar
+          </button>
+        )}
+        <button className="btn secondary" onClick={() => onDecide({ preferences: true })}>
+          Aceptar todo
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function DemoBanner() {
+  return (
+    <div className="demo-banner" role="note">
+      <Info size={16} aria-hidden="true" />
+      <span>
+        Proyecto de demostración: proveedores, precios y reservas son ficticios y no se procesan pagos reales.
+      </span>
+    </div>
+  );
+}
+
+function Footer({ navigate, openCookieSettings }) {
+  const legalLink = (page) => (
+    <button key={page} onClick={() => navigate({ name: "legal", page })}>
+      {legalPages[page].title}
+    </button>
+  );
+
   return (
     <footer className="footer">
       <div>
         <Logo compact />
-        <p>La plataforma ficticia para cotizar, comparar y reservar proveedores para eventos en Guatemala.</p>
+        <p>Marketplace para cotizar, comparar y reservar proveedores de eventos en Guatemala.</p>
+        <address className="footer-business">
+          {business.legalName}
+          <br />
+          NIT {business.taxId}
+          <br />
+          {business.address}
+          <br />
+          {business.email} · {business.phone}
+        </address>
       </div>
       <div>
         <strong>Explorar</strong>
@@ -1611,40 +2135,71 @@ function Footer({ navigate }) {
         <button onClick={() => navigate({ name: "info", section: "contacto" })}>Contacto</button>
       </div>
       <div>
-        <strong>Guatemala</strong>
-        <span>Servicio en todo el país</span>
-        <span>Ciudad de Guatemala</span>
-        <span>Antigua Guatemala</span>
+        <strong>Legal</strong>
+        {["privacidad", "terminos", "reembolsos", "cookies"].map(legalLink)}
+        <button onClick={openCookieSettings}>Preferencias de cookies</button>
       </div>
+      <div>
+        <strong>Tus datos</strong>
+        {["baja", "eliminar-datos", "creditos"].map(legalLink)}
+      </div>
+      <p className="footer-bottom">
+        © {new Date().getFullYear()} {business.brand}. Fotos de referencia: Unsplash.
+      </p>
     </footer>
   );
 }
 
+function readFavorites() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("vibe:favorites") || "[]");
+    return Array.isArray(saved) ? saved.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function App() {
-  const [route, setRoute] = useState({ name: "home" });
+  const [route, setRoute] = useState(() => hashToRoute(window.location.hash));
   const [authModal, setAuthModal] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
-  const [favorites, setFavorites] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("vibe:favorites") || "[]");
-      return Array.isArray(saved) ? saved.filter((item) => typeof item === "string") : [];
-    } catch {
-      return [];
-    }
-  });
+  const [consent, setConsent] = useState(() => readConsent());
+  const [showCookieBanner, setShowCookieBanner] = useState(() => !readConsent());
+  const [favorites, setFavorites] = useState(() => (readConsent()?.preferences ? readFavorites() : []));
+  const [pendingRoute, setPendingRoute] = useState(null);
 
   const navigate = (nextRoute) => {
     setRoute(nextRoute);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const hash = routeToHash(nextRoute);
+    if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+    window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
   };
 
   const openDashboard = (tab = "cotizaciones") => {
-    if (!currentUser && !localStorage.getItem("vibe:token")) {
+    if (!currentUser) {
+      setPendingRoute({ name: "dashboard", tab });
       setAuthModal("login");
       return;
     }
     navigate({ name: "dashboard", tab });
   };
+
+  const logout = () => {
+    localStorage.removeItem("vibe:token");
+    setCurrentUser(null);
+    navigate({ name: "home" });
+  };
+
+  // Atrás/Adelante del navegador y enlaces <a href="#/..."> internos.
+  useEffect(() => {
+    const sync = () => setRoute(hashToRoute(window.location.hash));
+    window.addEventListener("popstate", sync);
+    window.addEventListener("hashchange", sync);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener("hashchange", sync);
+    };
+  }, []);
 
   useEffect(() => {
     const goHome = () => navigate({ name: "home" });
@@ -1663,58 +2218,117 @@ export default function App() {
       });
   }, []);
 
+  // Los favoritos solo se guardan en el navegador si se aceptaron las cookies de preferencias.
   useEffect(() => {
-    localStorage.setItem("vibe:favorites", JSON.stringify(favorites));
-  }, [favorites]);
+    if (!consent?.preferences) return;
+    try {
+      localStorage.setItem("vibe:favorites", JSON.stringify(favorites));
+    } catch {
+      // Almacenamiento no disponible: los favoritos quedan en memoria.
+    }
+  }, [favorites, consent]);
+
+  useEffect(() => {
+    const titles = {
+      results: "Proveedores",
+      detail: providers.find((provider) => provider.id === route.providerId)?.name,
+      booking: "Nueva solicitud",
+      dashboard: "Mi panel",
+      info: "Información",
+      legal: legalPages[route.page]?.title,
+    };
+    document.title = titles[route.name] ? `${titles[route.name]} | ${business.brand}` : `${business.brand} | Proveedores para eventos en Guatemala`;
+  }, [route]);
+
+  const decideCookies = (choice) => {
+    setConsent(saveConsent(choice));
+    setShowCookieBanner(false);
+  };
 
   const toggleFavorite = (providerId) => {
     setFavorites((current) => (current.includes(providerId) ? current.filter((id) => id !== providerId) : [...current, providerId]));
   };
 
+  // El panel exige sesión; sin ella se muestra el inicio de sesión.
+  const needsLogin = route.name === "dashboard" && !currentUser;
+
   const page = (() => {
     if (route.name === "results") return <ResultsPage route={{ category: "salones", ...route }} navigate={navigate} favorites={favorites} toggleFavorite={toggleFavorite} />;
     if (route.name === "detail") return <DetailPage route={route} navigate={navigate} favorites={favorites} toggleFavorite={toggleFavorite} />;
     if (route.name === "booking") return <BookingPage route={route} navigate={navigate} />;
-    if (route.name === "dashboard") {
-      return <DashboardPage route={route} navigate={navigate} favorites={favorites} toggleFavorite={toggleFavorite} currentUser={currentUser} />;
+    if (route.name === "dashboard" && !needsLogin) {
+      return (
+        <DashboardPage
+          route={route}
+          navigate={navigate}
+          favorites={favorites}
+          toggleFavorite={toggleFavorite}
+          currentUser={currentUser}
+          setCurrentUser={setCurrentUser}
+          onLogout={logout}
+        />
+      );
     }
     if (route.name === "info") return <InfoPage route={route} navigate={navigate} />;
+    if (route.name === "legal") return <LegalPage slug={route.page} navigate={navigate} />;
     return <HomePage navigate={navigate} />;
   })();
 
+  const showChrome = route.name !== "dashboard" || needsLogin;
+
   return (
     <div className="app">
-      {route.name !== "dashboard" && (
+      <a
+        className="skip-link"
+        href="#contenido"
+        onClick={(event) => {
+          event.preventDefault();
+          const main = document.getElementById("contenido");
+          main?.setAttribute("tabindex", "-1");
+          main?.focus();
+        }}
+      >
+        Saltar al contenido
+      </a>
+      {business.demoMode && <DemoBanner />}
+      {showChrome && (
         <Header
           navigate={navigate}
-          currentView={route}
           openDashboard={() => openDashboard("cotizaciones")}
           openAuth={(mode) => setAuthModal(mode)}
+          currentUser={currentUser}
+          onLogout={logout}
         />
       )}
       <AnimatePresence mode="wait">
         <motion.div
-          key={`${route.name}-${route.category || route.providerId || route.section || route.tab || route.step || "home"}`}
-          initial={{ opacity: 0, y: 14 }}
+          key={routeToHash(route)}
+          initial={prefersReducedMotion() ? false : { opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
+          exit={prefersReducedMotion() ? undefined : { opacity: 0, y: -10 }}
           transition={{ duration: 0.24, ease: "easeOut" }}
         >
-          {page}
+          {needsLogin ? <HomePage navigate={navigate} /> : page}
         </motion.div>
       </AnimatePresence>
-      {authModal && (
+      {(authModal || needsLogin) && (
         <AuthModal
-          mode={authModal}
-          onClose={() => setAuthModal(null)}
+          mode={authModal || "login"}
+          onClose={() => {
+            setAuthModal(null);
+            setPendingRoute(null);
+            if (needsLogin) navigate({ name: "home" });
+          }}
           onSuccess={(user) => {
             setCurrentUser(user);
             setAuthModal(null);
-            navigate({ name: "dashboard", tab: "cotizaciones" });
+            navigate(pendingRoute || (needsLogin ? route : { name: "dashboard", tab: "cotizaciones" }));
+            setPendingRoute(null);
           }}
         />
       )}
-      {route.name !== "dashboard" && <Footer navigate={navigate} />}
+      {showChrome && <Footer navigate={navigate} openCookieSettings={() => setShowCookieBanner(true)} />}
+      {showCookieBanner && <CookieBanner onDecide={decideCookies} />}
     </div>
   );
 }
