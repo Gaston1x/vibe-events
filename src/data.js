@@ -111,6 +111,15 @@ const categoryImages = {
   ],
 };
 
+const categoryImageAlt = {
+  salones: "Imagen de referencia: salón decorado para un evento",
+  catering: "Imagen de referencia: mesa de catering con platillos servidos",
+  decoracion: "Imagen de referencia: decoración floral para una celebración",
+  fotografia: "Imagen de referencia: fotógrafo y equipo de cámara en un evento",
+  sonido: "Imagen de referencia: escenario con luces y equipo de sonido",
+  mobiliario: "Imagen de referencia: mobiliario y mesas montadas para un evento",
+};
+
 const providerNames = {
   salones: [
     "Jardín Botánico Eventos",
@@ -314,26 +323,20 @@ export const providers = categories.flatMap((category, categoryIndex) =>
       location,
       department: departments[index % departments.length],
       address: `${index + 3} avenida ${index + 8}-${(index % 9) + 10}, ${location}`,
-      rating: Number((4.5 + ((index + categoryIndex) % 5) * 0.08).toFixed(1)),
-      reviews: 38 + index * 9 + categoryIndex * 7,
       price,
       capacity: `${capacityMin} - ${capacityMax} personas`,
       image: gallery[0],
+      imageAlt: categoryImageAlt[category.id],
       gallery,
       tags: [...baseTags[category.id], eventTypes[index % eventTypes.length]].slice(0, 5),
       services: services[category.id],
       responseTime: `${2 + (index % 5)} h`,
       verified: index % 3 !== 1,
       featured: index < 4,
-      description: `${name} ofrece ${categoryDescriptions[category.id]} Su equipo trabaja con contratos claros, tiempos confirmados y acompañamiento antes, durante y después del evento.`,
+      description: `${name} ofrece ${categoryDescriptions[category.id]}`,
       package: {
         name: index % 2 === 0 ? "Paquete Esencial" : "Paquete Premium",
         includes: ["Asesoría inicial", "Coordinación de logística", "Checklist de montaje", "Soporte por WhatsApp"],
-      },
-      security: {
-        contract: true,
-        verifiedPayment: true,
-        protectedData: true,
       },
     };
   }),
@@ -360,6 +363,10 @@ export const reservations = providers.slice(4, 12).map((provider, index) => ({
   total: provider.price + 3500,
   status: index % 2 === 0 ? "Confirmada" : "En revisión",
 }));
+
+export const imageCredits = Object.entries(categoryImages).flatMap(([category, urls]) =>
+  urls.map((url) => ({ category, url: url.split("?")[0] })),
+);
 
 export const formatCurrency = (value) =>
   new Intl.NumberFormat("es-GT", {
